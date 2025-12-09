@@ -1,26 +1,51 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import './App.css'
-import letters from '../merged_letters.json'
 
-const AUTHOR_DISPLAY = {
-  Nickolai: 'Николай II',
-  Alexandra: 'Александра Фёдоровна',
+
+const getNamesForLetter = (letter) => {
+  return { authorName: letter.author, counterpartName: letter.recipient }
 }
 
-const buildThreadsFromLetters = (items) =>
-  items.map((letter) => {
-    const authorKey = letter.author
-    const authorName = AUTHOR_DISPLAY[authorKey] ?? 'Неизвестный автор'
-    const counterpartName =
-      authorKey === 'Nickolai'
-        ? 'Александра Фёдоровна'
-        : authorKey === 'Alexandra'
-        ? 'Николай II'
-        : 'Супруг(а)'
+const buildThreadsFromLetters = (items) => {
+  const letterById = new Map(items.map((letter) => [letter.id, letter]))
+
+  return items.map((letter) => {
+    const { authorName, counterpartName } = getNamesForLetter(letter)
 
     const flatText = (letter.text || '').replace(/\s+/g, ' ').trim()
     const snippet =
       flatText.length > 140 ? `${flatText.slice(0, 140).trimEnd()}…` : flatText
+
+    // Собираем всю цепочку reply_to от корня до текущего письма
+    const chain = []
+    const visited = new Set()
+    let current = letter
+
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id)
+      chain.push(current)
+
+      const replyToId = current.reply_to
+      if (!replyToId) {
+        break
+      }
+      current = letterById.get(replyToId) || null
+    }
+
+    const orderedChain = chain.slice().reverse()
+
+    const messages = orderedChain.map((entry) => {
+      const { authorName: entryAuthor, counterpartName: entryCounterpart } =
+        getNamesForLetter(entry)
+
+      return {
+        id: `m-${entry.id}`,
+        from: entryAuthor,
+        to: entryCounterpart,
+        time: entry.date,
+        body: entry.text,
+      }
+    })
 
     return {
       id: String(letter.id),
@@ -30,27 +55,59 @@ const buildThreadsFromLetters = (items) =>
       labels: ['Inbox'],
       unread: false,
       updatedAt: letter.iso_date || letter.date,
-      messages: [
-        {
-          id: `m-${letter.id}`,
-          from: authorName,
-          to: counterpartName,
-          time: letter.date,
-          body: letter.text,
-        },
-      ],
+      messages,
     }
   })
+}
 
-const LETTER_THREADS = buildThreadsFromLetters(letters)
+const MESSAGES_VISIBLE_LIMIT = 5
 
-const PEOPLE = ['All Contacts', 'Николай II', 'Александра Фёдоровна', 'Неизвестный автор']
+const PEOPLE = ['All Contacts', 'Nikolai', 'Alexandra', 'Wilhelm']
 
 function App() {
-  const [threads] = useState(LETTER_THREADS)
+  const [threads, setThreads] = useState([])
   const [activeSection, setActiveSection] = useState('inbox')
+  const [selectedPerson, setSelectedPerson] = useState('All Contacts')
   const [selectedThreadId, setSelectedThreadId] = useState(null)
   const [isThreadOpen, setIsThreadOpen] = useState(false)
+  const [showAllMessages, setShowAllMessages] = useState(false)
+  const listScrollPositionRef = useRef(0)
+  const listContainerRef = useRef(null) // оставляем ref, вдруг пригодится для других задач
+
+  useEffect(() => {
+    setShowAllMessages(false)
+  }, [selectedThreadId])
+
+  useEffect(() => {
+    if (!isThreadOpen) {
+      const y = listScrollPositionRef.current ?? 0
+      // даём React дорендерить список, а потом восстанавливаем скролл окна
+      requestAnimationFrame(() => {
+        window.scrollTo(0, y)
+      })
+    }
+  }, [isThreadOpen])
+
+  useEffect(() => {
+    const loadLetters = async () => {
+      try {
+        let url = 'http://localhost:8000/letters'
+        if (selectedPerson !== 'All Contacts') {
+          url += `?author=${encodeURIComponent(selectedPerson)}`
+        }
+        const response = await fetch(url)
+        if (!response.ok) {
+          throw new Error('Failed to fetch letters')
+        }
+        const data = await response.json()
+        const threadsData = buildThreadsFromLetters(data)
+        setThreads(threadsData)
+      } catch (error) {
+        console.error('Error fetching letters:', error)
+      }
+    }
+    loadLetters()
+  }, [selectedPerson])
 
   const filteredThreads = threads.filter((thread) => {
     if (activeSection === 'starred') {
@@ -67,6 +124,14 @@ function App() {
 
   const currentSectionTitle =
     activeSection === 'starred' ? 'Starred' : activeSection === 'sent' ? 'Sent' : 'Inbox'
+
+  const allMessages = selectedThread?.messages ?? []
+  const hasHiddenMessages = allMessages.length > MESSAGES_VISIBLE_LIMIT
+  const hiddenCount = hasHiddenMessages ? allMessages.length - MESSAGES_VISIBLE_LIMIT : 0
+  const messagesToRender =
+    showAllMessages || !hasHiddenMessages
+      ? allMessages
+      : allMessages.slice(-MESSAGES_VISIBLE_LIMIT)
 
   return (
     <div className="app gmail">
@@ -122,7 +187,14 @@ function App() {
                 <div className="gmail-people-title">People</div>
                 <div className="gmail-people-list">
                   {PEOPLE.map((person) => (
-                    <button key={person} type="button" className="gmail-people-item">
+                    <button
+                      key={person}
+                      type="button"
+                      className={`gmail-people-item${
+                        selectedPerson === person ? ' gmail-people-item--active' : ''
+                      }`}
+                      onClick={() => setSelectedPerson(person)}
+                    >
                       {person}
                     </button>
                   ))}
@@ -131,7 +203,7 @@ function App() {
             </div>
           </aside>
 
-          <section className="gmail-list-column">
+          <section className="gmail-list-column" ref={listContainerRef}>
             {isThreadOpen && selectedThread ? (
               <div className="gmail-thread-view">
                 <header className="gmail-thread-header">
@@ -145,7 +217,13 @@ function App() {
                   <div>
                     <div className="gmail-thread-header-subject">{selectedThread.subject}</div>
                     <div className="gmail-thread-header-participants">
-                      {selectedThread.participants.join(' · ')}
+                      <span>
+                        <strong>Автор письма:</strong> {selectedThread.participants[0]}
+                      </span>
+                      {' · '}
+                      <span>
+                        <strong>Адресат:</strong> {selectedThread.participants[1]}
+                      </span>
                     </div>
                     <div className="gmail-thread-header-thread-meta">
                       Цепочка писем · {selectedThread.messages.length}{' '}
@@ -155,12 +233,33 @@ function App() {
                 </header>
 
                 <main className="gmail-messages">
-                  {selectedThread.messages.map((message) => (
+                  {hasHiddenMessages && !showAllMessages ? (
+                    <button
+                      type="button"
+                      className="gmail-thread-show-older"
+                      onClick={() => setShowAllMessages(true)}
+                    >
+                      Показать предыдущие {hiddenCount}{' '}
+                      {hiddenCount === 1
+                        ? 'письмо'
+                        : hiddenCount > 1 && hiddenCount < 5
+                        ? 'письма'
+                        : 'писем'}
+                    </button>
+                  ) : null}
+
+                  {messagesToRender.map((message) => (
                     <article key={message.id} className="gmail-message">
                       <header className="gmail-message-header">
-                        <div className="gmail-message-from">{message.from}</div>
+                        <div className="gmail-message-from-to">
+                          <div className="gmail-message-from">
+                            <strong>От:</strong> {message.from}
+                          </div>
+                          <div className="gmail-message-to">
+                            <strong>Кому:</strong> {message.to}
+                          </div>
+                        </div>
                         <div className="gmail-message-meta">
-                          <div className="gmail-message-to">{message.to}</div>
                           <div className="gmail-message-time">{message.time}</div>
                         </div>
                       </header>
@@ -188,6 +287,7 @@ function App() {
                         type="button"
                         className={`gmail-thread-row${thread.unread ? ' gmail-thread-row--unread' : ''}`}
                         onClick={() => {
+                          listScrollPositionRef.current = window.scrollY ?? 0
                           setSelectedThreadId(thread.id)
                           setIsThreadOpen(true)
                         }}
@@ -196,7 +296,8 @@ function App() {
                           <div className="gmail-thread-subject">{thread.subject}</div>
                           <div className="gmail-thread-meta">
                             <span className="gmail-thread-participants">
-                              {thread.participants.join(' · ')}
+                              <strong>Автор:</strong> {thread.participants[0]} ·{' '}
+                              <strong>Адресат:</strong> {thread.participants[1]}
                             </span>
                             <span className="gmail-thread-time">{thread.updatedAt}</span>
                           </div>
