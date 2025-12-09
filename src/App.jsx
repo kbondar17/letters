@@ -91,7 +91,9 @@ function App() {
   useEffect(() => {
     const loadLetters = async () => {
       try {
-        let url = 'http://localhost:8000/letters'
+        // Use environment variable for API URL, fallback to localhost for dev
+        const apiBaseUrl = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+        let url = `${apiBaseUrl}/letters`
         if (selectedPerson !== 'All Contacts') {
           url += `?author=${encodeURIComponent(selectedPerson)}`
         }
