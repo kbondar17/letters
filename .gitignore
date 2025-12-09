@@ -8,3 +8,15 @@ __pycache__
 !data/
 !public/
 !migrations/
+!requirements.txt
+!pyproject.toml
+!uv.lock
+!Makefile
+!index.html
+!package.json
+!package-lock.json
+!main.py
+!README.md
+!eslint.config.js
+!.python-version
+!vite.config.js

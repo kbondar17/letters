@@ -1,0 +1,20 @@
+[project]
+name = "letters"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12.4"
+dependencies = [
+    "beautifulsoup4>=4.14.3",
+    "fastapi",
+    "uvicorn[standard]",
+    "pydantic",
+    "tinydb",
+]
+
+[project.optional-dependencies]
+backend = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+]
+
